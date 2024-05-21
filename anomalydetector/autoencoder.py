@@ -1,5 +1,8 @@
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.preprocessing import StandardScaler
 
 from .model import Autoencoder
 from .utils import (
@@ -10,27 +13,25 @@ from .utils import (
 )
 
 
-def detect_anomalies_with_lstm_autoencoder(
-    part_data: np.ndarray,
-    seq_length: int = 10,
-    hidden_dim: int = 30,
-    epochs: int = 200,
-    lr: float = 1e-3,
-    loss_type: LossFunctionType = LossFunctionType.MSE,
-    verbose: bool = False,
-    threshold_percentile: int = 95,
-    seed: int = 42,
-):
-    set_seeds(seed)
+def create_sequences(data, seq_length):
+    sequences = []
+    for i in range(len(data) - seq_length + 1):
+        sequences.append(data[i:i + seq_length])
+    return np.array(sequences)
 
-    _, input_dim = part_data.shape
+def detect_anomalies_with_lstm_autoencoder(part_data, seq_length=10, hidden_dim=30, epochs=200, lr=1e-3, verbose=False, threshold_percentile=99, seed=42):
+    
+    torch.manual_seed(seed)
+    np.random.seed(seed)
 
-    part_sequences = create_sequences(part_data, seq_length)
+    scaler = StandardScaler()
+    part_data_scaled = scaler.fit_transform(part_data)
+    part_sequences = create_sequences(part_data_scaled, seq_length)
     part_sequences_tensor = torch.FloatTensor(part_sequences)
 
-    model = Autoencoder(input_dim, hidden_dim, seq_length)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    criterion = get_loss_function(loss_type)
+    model = Autoencoder(part_sequences_tensor.shape[2], hidden_dim, seq_length)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.MSELoss()
 
     for epoch in range(epochs):
         model.train()
@@ -41,14 +42,12 @@ def detect_anomalies_with_lstm_autoencoder(
         optimizer.step()
 
         if verbose and (epoch + 1) % 20 == 0:
-            print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}")
+            print(f"Epoch [{epoch + 1:>3}/{epochs:>3}], Loss: {loss.item():.4f}")
 
     model.eval()
     with torch.no_grad():
         reconstructed = model(part_sequences_tensor)
-        reconstruction_errors = torch.mean(
-            torch.square(part_sequences_tensor - reconstructed), dim=[1, 2]
-        )
+        reconstruction_errors = torch.mean((part_sequences_tensor - reconstructed) ** 2, dim=[1, 2])
 
     threshold = np.percentile(reconstruction_errors, threshold_percentile)
     anomaly_indices = np.where(reconstruction_errors > threshold)[0]

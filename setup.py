@@ -11,6 +11,7 @@ setup(
         "torch",
         "torchvision",
         "torchaudio",
+        "scikit-learn",
     ],
     license="MIT",
     description=(
