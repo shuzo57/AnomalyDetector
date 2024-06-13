@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.preprocessing import StandardScaler
 
-from .model import Autoencoder
+from .model import LSTMAutoencoder, BiLSTMAutoencoder
 from .utils import (
     LossFunctionType,
     create_sequences,
@@ -19,8 +19,8 @@ def create_sequences(data, seq_length):
         sequences.append(data[i:i + seq_length])
     return np.array(sequences)
 
+
 def detect_anomalies_with_lstm_autoencoder(part_data, seq_length=10, hidden_dim=30, epochs=200, lr=1e-3, verbose=False, threshold_percentile=99, seed=42):
-    
     torch.manual_seed(seed)
     np.random.seed(seed)
 
@@ -29,7 +29,7 @@ def detect_anomalies_with_lstm_autoencoder(part_data, seq_length=10, hidden_dim=
     part_sequences = create_sequences(part_data_scaled, seq_length)
     part_sequences_tensor = torch.FloatTensor(part_sequences)
 
-    model = Autoencoder(part_sequences_tensor.shape[2], hidden_dim, seq_length)
+    model = LSTMAutoencoder(part_sequences_tensor.shape[2], hidden_dim, seq_length)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
 
@@ -53,6 +53,41 @@ def detect_anomalies_with_lstm_autoencoder(part_data, seq_length=10, hidden_dim=
     anomaly_indices = np.where(reconstruction_errors > threshold)[0]
 
     return anomaly_indices, reconstruction_errors
+
+
+def detect_anomalies_with_bilstm_autoencoder(part_data, seq_length=10, hidden_dim=30, epochs=200, lr=1e-3, verbose=False, threshold_percentile=99, seed=42):
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+    
+        scaler = StandardScaler()
+        part_data_scaled = scaler.fit_transform(part_data)
+        part_sequences = create_sequences(part_data_scaled, seq_length)
+        part_sequences_tensor = torch.FloatTensor(part_sequences)
+    
+        model = BiLSTMAutoencoder(part_sequences_tensor.shape[2], hidden_dim, seq_length)
+        optimizer = optim.Adam(model.parameters(), lr=lr)
+        criterion = nn.MSELoss()
+    
+        for epoch in range(epochs):
+            model.train()
+            optimizer.zero_grad()
+            outputs = model(part_sequences_tensor)
+            loss = criterion(outputs, part_sequences_tensor)
+            loss.backward()
+            optimizer.step()
+    
+            if verbose and (epoch + 1) % 20 == 0:
+                print(f"Epoch [{epoch + 1:>3}/{epochs:>3}], Loss: {loss.item():.4f}")
+    
+        model.eval()
+        with torch.no_grad():
+            reconstructed = model(part_sequences_tensor)
+            reconstruction_errors = torch.mean((part_sequences_tensor - reconstructed) ** 2, dim=[1, 2])
+    
+        threshold = np.percentile(reconstruction_errors, threshold_percentile)
+        anomaly_indices = np.where(reconstruction_errors > threshold)[0]
+    
+        return anomaly_indices, reconstruction_errors
 
 
 def detect_anomalies_with_moving_avg_std(
